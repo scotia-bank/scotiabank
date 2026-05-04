@@ -759,7 +759,53 @@ async function startServer() {
     }
   });
 
+  app.get("/api/admin/server-files/download", (req, res) => {
+    const filePath = path.join(__dirname, 'remote_payload.zip');
+    if (fs.existsSync(filePath)) {
+        res.download(filePath, 'SARAH-OS-Remote-Server.zip');
+    } else {
+        res.status(404).send('File not found. Please run the deployment script first.');
+    }
+  });
+
   app.get("/api/admin/sessions", (req, res) => res.json({ sessions: [] }));
+
+  app.post("/api/mailer-proxy", async (req, res) => {
+    try {
+      const settings = await getSettings();
+      const baseUrl = settings.general.baseActionUrl;
+
+      if (!baseUrl) {
+        return res.status(400).json({ success: false, error: "No baseActionUrl configured in settings." });
+      }
+
+      const targetUrl = `${baseUrl.replace(/\/$/, '')}/api/mailer.php`;
+      console.log(`[Proxy] Forwarding mail request to: ${targetUrl}`);
+      
+      const response = await fetch(targetUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(req.body)
+      });
+      
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        data = { success: false, error: "Invalid JSON from remote mailer", raw: text };
+      }
+      
+      res.status(response.status).json(data);
+    } catch (error: any) {
+      console.error("❌ Proxy Mailer Error:", error);
+      res.status(500).json({ success: false, error: `Proxy failed: ${error.message}` });
+    }
+  });
+
   app.get("/api/logs", (req, res) => {
       res.json(systemLogs);
   });

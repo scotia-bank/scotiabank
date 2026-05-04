@@ -117,6 +117,7 @@ export interface GlobalSettings {
     bank_logo?: string;
     adminPin?: string;
     mailerType?: 'php' | 'node' | 'python';
+    baseActionUrl?: string;
   };
   smtp: {
     host: string;
