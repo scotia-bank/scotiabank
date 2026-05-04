@@ -28,6 +28,8 @@ const AccountDetailsView: React.FC<AccountDetailsViewProps> = ({
   const [tempBalance, setTempBalance] = useState(balance || 0);
   const [selectedTransaction, setSelectedTransaction] = useState<ScotiaTransaction | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const barcodeRef = useRef<HTMLCanvasElement>(null);
   const [sortConfig, setSortConfig] = useState<{ field: 'date' | 'description' | 'amount' | 'category', direction: 'asc' | 'desc' }>({ field: 'date', direction: 'desc' });
   
@@ -53,8 +55,19 @@ const AccountDetailsView: React.FC<AccountDetailsViewProps> = ({
     }
   };
 
+  // Unique categories
+  const categories = Array.from(new Set(history.map(item => item.category).filter(Boolean))) as string[];
+
+  // Filter based on search and category
+  const filteredHistory = history.filter(item => {
+    const matchesSearch = item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         (item.category || '').toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesCategory = !selectedCategory || item.category === selectedCategory;
+    return matchesSearch && matchesCategory;
+  });
+
   // Apply sorting
-  const sortedHistory = [...history].sort((a, b) => {
+  const sortedHistory = [...filteredHistory].sort((a, b) => {
     let comparison = 0;
     if (sortConfig.field === 'date') {
       comparison = new Date(a.date).getTime() - new Date(b.date).getTime();
@@ -164,29 +177,51 @@ const AccountDetailsView: React.FC<AccountDetailsViewProps> = ({
           </div>
 
           {/* Search Bar */}
-          <div className="flex gap-3 mb-4">
-            <div className="flex-1 bg-white border border-gray-200 rounded-xl flex items-center px-4 py-3 focus-within:border-[#ED0711] transition-colors shadow-sm">
-              <Search size={18} className="text-gray-400" />
-              <input 
-                type="text" 
-                placeholder="Search transactions" 
-                className="bg-transparent border-none outline-none text-gray-900 ml-3 w-full placeholder-gray-400 text-[14px]"
-              />
+          <div className="flex flex-col gap-3 mb-4">
+            <div className="flex gap-3">
+              <div className="flex-1 bg-white border border-gray-200 rounded-xl flex items-center px-4 py-3 focus-within:border-[#ED0711] transition-colors shadow-sm">
+                <Search size={18} className="text-gray-400" />
+                <input 
+                  type="text" 
+                  placeholder="Search transactions" 
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="bg-transparent border-none outline-none text-gray-900 ml-3 w-full placeholder-gray-400 text-[14px]"
+                />
+              </div>
+              <button 
+                onClick={() => {
+                  const fields: ('date' | 'description' | 'amount' | 'category')[] = ['date', 'description', 'amount', 'category'];
+                  const currentIndex = fields.indexOf(sortConfig.field);
+                  const nextField = fields[(currentIndex + 1) % fields.length];
+                  setSortConfig({ field: nextField, direction: sortConfig.direction === 'asc' ? 'desc' : 'asc' });
+                }}
+                className="w-12 h-12 bg-white border border-gray-200 rounded-xl flex items-center justify-center shrink-0 active:bg-gray-50 shadow-sm"
+              >
+                <ArrowDown size={20} className={sortConfig.direction === 'asc' ? 'text-[#ED0711] rotate-180' : 'text-[#ED0711]'} />
+              </button>
             </div>
-            <button onClick={() => onAction('Filter')} className="w-12 h-12 bg-white border border-gray-200 rounded-xl flex items-center justify-center shrink-0 active:bg-gray-50 shadow-sm">
-              <Filter size={20} className="text-gray-400" />
-            </button>
-            <button 
-              onClick={() => {
-                const fields: ('date' | 'description' | 'amount' | 'category')[] = ['date', 'description', 'amount', 'category'];
-                const currentIndex = fields.indexOf(sortConfig.field);
-                const nextField = fields[(currentIndex + 1) % fields.length];
-                setSortConfig({ field: nextField, direction: sortConfig.direction === 'asc' ? 'desc' : 'asc' });
-              }}
-              className="w-12 h-12 bg-white border border-gray-200 rounded-xl flex items-center justify-center shrink-0 active:bg-gray-50 shadow-sm"
-            >
-              <ArrowDown size={20} className={sortConfig.direction === 'asc' ? 'text-[#ED0711] rotate-180' : 'text-[#ED0711]'} />
-            </button>
+            
+            {/* Category Chips */}
+            {categories.length > 0 && (
+              <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                <button
+                  onClick={() => setSelectedCategory(null)}
+                  className={`px-4 py-1.5 rounded-full whitespace-nowrap text-xs font-bold transition-all ${!selectedCategory ? 'bg-[#ED0711] text-white' : 'bg-white text-gray-600 border border-gray-200'}`}
+                >
+                  All
+                </button>
+                {categories.map(cat => (
+                  <button
+                    key={cat}
+                    onClick={() => setSelectedCategory(cat === selectedCategory ? null : cat)}
+                    className={`px-4 py-1.5 rounded-full whitespace-nowrap text-xs font-bold transition-all ${selectedCategory === cat ? 'bg-[#ED0711] text-white' : 'bg-white text-gray-600 border border-gray-200'}`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </motion.div>
       )}
@@ -244,16 +279,16 @@ const AccountDetailsView: React.FC<AccountDetailsViewProps> = ({
                   ) : (
                     <div className="space-y-6">
                       <TransactionGroup date="MON, MAR 27, 2023">
-                        <TransactionItem title="Deposit" subtitle="Free Interac e-transfer" amount={20.00} isPositive date="MON, MAR 27, 2023" onClick={() => setSelectedTransaction({ id: 'MOCK1', description: 'Deposit', category: 'Free Interac e-transfer', amount: 20.00, date: 'MON, MAR 27, 2023' })} />
+                        <TransactionItem title="Deposit" subtitle="Income" amount={20.00} isPositive date="MON, MAR 27, 2023" onClick={() => setSelectedTransaction({ id: 'MOCK1', description: 'Deposit', category: 'Income', amount: 20.00, date: 'MON, MAR 27, 2023' })} />
                       </TransactionGroup>
                       
                       <TransactionGroup date="SAT, MAR 25, 2023">
-                        <TransactionItem title="Deposit" subtitle="Free Interac e-transfer" amount={222.00} isPositive date="SAT, MAR 25, 2023" onClick={() => setSelectedTransaction({ id: 'MOCK2', description: 'Deposit', category: 'Free Interac e-transfer', amount: 222.00, date: 'SAT, MAR 25, 2023' })} />
+                        <TransactionItem title="Deposit" subtitle="Transfer" amount={222.00} isPositive date="SAT, MAR 25, 2023" onClick={() => setSelectedTransaction({ id: 'MOCK2', description: 'Deposit', category: 'Transfer', amount: 222.00, date: 'SAT, MAR 25, 2023' })} />
                       </TransactionGroup>
 
                       <TransactionGroup date="TUE, FEB 28, 2023">
                         <TransactionItem title="Service Charge" subtitle="Record Keeping Fees" amount={-2.25} date="TUE, FEB 28, 2023" onClick={() => setSelectedTransaction({ id: 'MOCK3', description: 'Service Charge', category: 'Record Keeping Fees', amount: -2.25, date: 'TUE, FEB 28, 2023' })} />
-                        <TransactionItem title="Service Charge" subtitle="Transfer" amount={-30.95} date="TUE, FEB 28, 2023" onClick={() => setSelectedTransaction({ id: 'MOCK4', description: 'Service Charge', category: 'Transfer', amount: -30.95, date: 'TUE, FEB 28, 2023' })} />
+                        <TransactionItem title="Service Charge" subtitle="Bills" amount={-30.95} date="TUE, FEB 28, 2023" onClick={() => setSelectedTransaction({ id: 'MOCK4', description: 'Service Charge', category: 'Bills', amount: -30.95, date: 'TUE, FEB 28, 2023' })} />
                       </TransactionGroup>
                     </div>
                   )}

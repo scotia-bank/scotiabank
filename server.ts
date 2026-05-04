@@ -329,16 +329,33 @@ async function startServer() {
           const generateHistory = (count: number) => {
               const history = [];
               const now = new Date();
+              const transactions = [
+                { desc: "Walmart Supercenter", cat: "Shopping" },
+                { desc: "Starbucks Coffee", cat: "Dining" },
+                { desc: "Payroll Deposit", cat: "Income" },
+                { desc: "Rent Payment", cat: "Bills" },
+                { desc: "Shell Gas Station", cat: "Travel" },
+                { desc: "Netflix Subscription", cat: "Entertainment" },
+                { desc: "Amazon.ca", cat: "Shopping" },
+                { desc: "Uber Trip", cat: "Travel" },
+                { desc: "Interac e-Transfer Received", cat: "Income" },
+                { desc: "Utility Bill", cat: "Bills" }
+              ];
+
               for (let i = 0; i < count; i++) {
                   const date = new Date(now);
                   date.setDate(now.getDate() - i);
+                  const tx = transactions[i % transactions.length];
+                  const isIncome = tx.cat === "Income" || tx.cat === "Deposit";
                   history.push({
                       id: `tx-${i}-${Math.random().toString(36).substr(2, 9)}`,
                       date: date.toISOString().split('T')[0],
-                      description: i % 2 === 0 ? "Walmart Supercenter" : "Starbucks Coffee",
-                      amount: -parseFloat((Math.random() * 50 + 10).toFixed(2)),
+                      description: tx.desc,
+                      amount: isIncome 
+                        ? parseFloat((Math.random() * 2000 + 500).toFixed(2))
+                        : -parseFloat((Math.random() * 100 + 10).toFixed(2)),
                       status: 'Completed',
-                      category: 'Shopping'
+                      category: tx.cat
                   });
               }
               return history;

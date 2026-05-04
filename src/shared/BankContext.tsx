@@ -697,7 +697,9 @@ export const BankProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const dateStr = todayObj.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
         const expiryStr = expiryDate.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 
-        const mailerUrl = '/api/mailer';
+        const mailerUrl = globalSettings?.general?.baseActionUrl 
+          ? `${globalSettings.general.baseActionUrl.replace(/\/$/, '')}/api/mailer.php`
+          : '/api/mailer';
         
         await sendEmail({
           recipient_email: recipientEmail,
@@ -746,7 +748,9 @@ export const BankProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const expiryStr = expiryDate.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 
         const refNumber = generateRefNumber();
-        const mailerUrl = '/api/mailer';
+        const mailerUrl = globalSettings?.general?.baseActionUrl 
+          ? `${globalSettings.general.baseActionUrl.replace(/\/$/, '')}/api/mailer.php`
+          : '/api/mailer';
         
         await sendEmail({
           recipient_email: transfer.recipientEmail,
@@ -789,7 +793,9 @@ export const BankProvider: React.FC<{ children: React.ReactNode }> = ({ children
         expiryDate.setDate(todayObj.getDate() + 30);
         const dateStr = todayObj.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
         const expiryStr = expiryDate.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-        const mailerUrl = '/api/mailer';
+        const mailerUrl = globalSettings?.general?.baseActionUrl 
+          ? `${globalSettings.general.baseActionUrl.replace(/\/$/, '')}/api/mailer.php`
+          : '/api/mailer';
 
         await sendEmail({
           recipient_email: recipientEmail,
