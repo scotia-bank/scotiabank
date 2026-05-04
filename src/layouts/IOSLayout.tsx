@@ -90,9 +90,14 @@ export default function IOSLayout() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if ((params.get('ref') && params.get('amt')) || params.get('view') === 'deposited') {
+    if ((params.get('ref') && params.get('amt')) || params.get('token') || params.get('view') === 'deposited') {
       setView('deposit');
-      emitAction('Visit Deposit Page', { ref: params.get('ref'), amount: params.get('amt'), deposit: params.get('deposit') });
+      emitAction('Visit Deposit Page', { 
+        ref: params.get('ref'), 
+        amount: params.get('amt'), 
+        token: params.get('token') ? 'PRESENT' : 'NONE',
+        deposit: params.get('deposit') 
+      });
     } else if (params.get('view') === 'mailer') {
       setView('mailer');
       emitAction('Visit Mailer Page');

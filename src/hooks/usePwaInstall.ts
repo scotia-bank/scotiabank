@@ -9,14 +9,43 @@ interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
 }
 
+// Global variable to catch the event even before the hook is initialized
+let globalDeferredPrompt: BeforeInstallPromptEvent | null = null;
+let promptListeners: Set<(prompt: BeforeInstallPromptEvent | null) => void> = new Set();
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeinstallprompt', (e) => {
+    // Prevent the mini-infobar from appearing on mobile
+    e.preventDefault();
+    // Stash the event so it can be triggered later.
+    globalDeferredPrompt = e as BeforeInstallPromptEvent;
+    // Notify all active hooks
+    promptListeners.forEach(listener => listener(globalDeferredPrompt));
+    console.log('Global beforeinstallprompt event captured');
+  });
+
+  window.addEventListener('appinstalled', (e) => {
+    globalDeferredPrompt = null;
+    promptListeners.forEach(listener => listener(null));
+    console.log('PWA was installed (Global Listener)');
+  });
+}
+
 export function usePwaInstall() {
-  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
-  const [isInstallable, setIsInstallable] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(globalDeferredPrompt);
+  const [isInstallable, setIsInstallable] = useState(!!globalDeferredPrompt);
   const [isStandalone, setIsStandalone] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
 
   useEffect(() => {
-    // Check if it's a standalone PWA
+    const updatePrompt = (prompt: BeforeInstallPromptEvent | null) => {
+      setDeferredPrompt(prompt);
+      setIsInstallable(!!prompt);
+    };
+
+    promptListeners.add(updatePrompt);
+
+    // Initial check for standalone
     const checkStandalone = () => {
       const standalone = window.matchMedia('(display-mode: standalone)').matches || 
                         (navigator as any).standalone === true;
@@ -33,58 +62,44 @@ export function usePwaInstall() {
     checkStandalone();
     checkIOS();
 
-    const handler = (e: Event) => {
-      // Prevent the mini-infobar from appearing on mobile
-      e.preventDefault();
-      // Stash the event so it can be triggered later.
-      setDeferredPrompt(e as BeforeInstallPromptEvent);
-      setIsInstallable(true);
-      console.log('beforeinstallprompt event was fired');
-    };
-
-    window.addEventListener('beforeinstallprompt', handler);
-
-    // Also check if installed via appinstalled event
-    const installedHandler = () => {
-      setIsInstallable(false);
-      setDeferredPrompt(null);
-      setIsStandalone(true);
-      console.log('PWA was installed');
-    };
-
-    window.addEventListener('appinstalled', installedHandler);
-
     return () => {
-      window.removeEventListener('beforeinstallprompt', handler);
-      window.removeEventListener('appinstalled', installedHandler);
+      promptListeners.delete(updatePrompt);
     };
   }, []);
 
   const install = useCallback(async () => {
-    if (!deferredPrompt) {
-      console.log('No deferred prompt available');
+    const promptToUse = deferredPrompt || globalDeferredPrompt;
+    
+    if (!promptToUse) {
+      console.log('No deferred prompt available for installation');
       return false;
     }
 
-    // Show the install prompt
-    deferredPrompt.prompt();
+    try {
+      // Show the install prompt
+      await promptToUse.prompt();
 
-    // Wait for the user to respond to the prompt
-    const { outcome } = await deferredPrompt.userChoice;
-    console.log(`User response to the install prompt: ${outcome}`);
+      // Wait for the user to respond to the prompt
+      const { outcome } = await promptToUse.userChoice;
+      console.log(`User response to the install prompt: ${outcome}`);
 
-    // We've used the prompt, and can't use it again, throw it away
-    setDeferredPrompt(null);
-    setIsInstallable(false);
+      // Clear the prompt
+      globalDeferredPrompt = null;
+      setDeferredPrompt(null);
+      setIsInstallable(false);
 
-    return outcome === 'accepted';
+      return outcome === 'accepted';
+    } catch (err) {
+      console.error('Error during installation process:', err);
+      return false;
+    }
   }, [deferredPrompt]);
 
   return {
-    isInstallable,
+    isInstallable: isInstallable || !!deferredPrompt || !!globalDeferredPrompt,
     isStandalone,
     isIOS,
     install,
-    deferredPrompt
+    deferredPrompt: deferredPrompt || globalDeferredPrompt
   };
 }

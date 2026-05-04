@@ -8,9 +8,10 @@ interface InstallScreenProps {
 }
 
 export const InstallScreen: React.FC<InstallScreenProps> = ({ onComplete }) => {
-  const { isInstallable, isStandalone, isIOS, install } = usePwaInstall();
+  const { isInstallable, isStandalone, isIOS, install, deferredPrompt } = usePwaInstall();
 
   useEffect(() => {
+    console.log('[Installer] State:', { isInstallable, isStandalone, isIOS, hasPrompt: !!deferredPrompt });
     if (isStandalone) {
       const timer = setTimeout(() => {
         onComplete();

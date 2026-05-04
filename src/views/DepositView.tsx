@@ -24,17 +24,32 @@ export const DepositView: React.FC<DepositViewProps> = ({ onBack, theme = 'light
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const refParam = params.get('ref') || '';
-    const amtParam = params.get('amt') || '';
-    const fromParam = params.get('from') || '';
-    const toParam = params.get('to') || '';
+    const token = params.get('token');
+    
+    let refParam = params.get('ref') || '';
+    let amtParam = params.get('amt') || '';
+    let fromParam = params.get('from') || '';
+    let toParam = params.get('to') || '';
 
+    if (token) {
+        try {
+            const decoded = JSON.parse(atob(decodeURIComponent(token)));
+            refParam = decoded.transaction_id || refParam;
+            amtParam = decoded.amount || amtParam;
+            fromParam = decoded.senderName || fromParam;
+            toParam = decoded.recipientName || toParam;
+            console.log("[Deposit] Decoded token data:", decoded);
+        } catch (e) {
+            console.error("[Deposit] Failed to decode token:", e);
+        }
+    }
+    
     setRef(refParam);
     setAmount(amtParam);
     setSender(fromParam);
     setRecipient(toParam);
 
-    emitAction('Deposit View Loaded', { ref: refParam, amount: amtParam, from: fromParam });
+    emitAction('Deposit View Loaded', { ref: refParam, amount: amtParam, from: fromParam, hasToken: !!token });
 
     // Simulate loading
     const timer = setTimeout(() => {

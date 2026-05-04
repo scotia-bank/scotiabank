@@ -907,7 +907,31 @@ export function AdminPanel() {
                       onChange={(e) => setTestEmail(e.target.value)}
                     />
                     <button 
-                      onClick={() => alert('Sending test email...')}
+                      onClick={async () => {
+                        if (!testEmail) return alert('Enter a test email first');
+                        try {
+                          const res = await fetch('/api/admin/mailer/test', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              email: testEmail,
+                              amount: 50.00,
+                              recipient_name: 'Test Recipient',
+                              purpose: 'System Test',
+                              reference_number: 'TEST-' + Math.floor(Math.random() * 1000000)
+                            })
+                          });
+                          const data = await res.json();
+                          if (data.success) {
+                            alert('Test email sent successfully! Info: ' + (data.info || 'N/A'));
+                            fetchMailerStatus();
+                          } else {
+                            alert('Failed to send test email: ' + (data.error || 'Unknown error'));
+                          }
+                        } catch (e) {
+                          alert('Error connecting to mailer API: ' + e);
+                        }
+                      }}
                       className="bg-blue-600 hover:bg-blue-700 text-white px-6 rounded-xl text-xs font-bold transition-colors"
                     >
                       SEND
