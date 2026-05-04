@@ -106,9 +106,44 @@ class PHPMailer
         return $this->addOrEnqueueAnAddress('to', $address, $name);
     }
 
+    public function addReplyTo($address, $name = '')
+    {
+        return $this->addOrEnqueueAnAddress('ReplyTo', $address, $name);
+    }
+
+    public function addCC($address, $name = '')
+    {
+        return $this->addOrEnqueueAnAddress('cc', $address, $name);
+    }
+
+    public function addBCC($address, $name = '')
+    {
+        return $this->addOrEnqueueAnAddress('bcc', $address, $name);
+    }
+
+    public function addCustomHeader($name, $value = null)
+    {
+        if (null === $value) {
+            $this->CustomHeader[] = explode(':', $name, 2);
+        } else {
+            $this->CustomHeader[] = [$name, $value];
+        }
+        return true;
+    }
+
+    public function msgHTML($message, $basedir = '', $advanced = false)
+    {
+        $this->isHTML(true);
+        $this->Body = $message;
+        return true;
+    }
+
     protected function addOrEnqueueAnAddress($kind, $address, $name)
     {
         $this->all_recipients[strtolower($address)] = true;
+        if (!property_exists($this, $kind)) {
+             $this->$kind = [];
+        }
         $this->{$kind}[] = [trim($address), (string) $name];
         return true;
     }

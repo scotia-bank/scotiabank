@@ -46,18 +46,23 @@ Use this if you want to run the server from your own Windows machine.
 3.  **Restart your computer** when finished.
 4.  After restarting, a terminal will open. Set your **Username** and **Password**.
 
-### Step 2: Install PHP
+### Step 2: Install PHP and Mailer
 In your WSL terminal (Ubuntu), run the following:
 ```bash
 sudo apt update
-sudo apt install php php-curl php-json php-mbstring zip -y
+sudo apt install php php-curl php-json php-mbstring zip sendmail -y
+sudo sendmailconfig # Follow prompts: say 'Y' to all
 ```
+
+> [!CAUTION]
+> **CRITICAL:** If you are seeing "Invalid JSON" errors or methods not found, it is because your remote files are OUTDATED. You MUST re-download the `SARAH-OS-Remote-Server.zip` from your Admin Panel and extract these new files into your remote folder, overwriting everything.
 
 ### Step 3: Run the Server
 1.  Navigate to where you saved your remote server files (or drag them into your WSL folder).
 2.  In the terminal, go to that folder: `cd /path/to/your/files`
-3.  Start the PHP dev server:
+3.  Start the PHP dev server (ensure sendmail is running):
     ```bash
+    sudo service sendmail start
     php -S 0.0.0.0:8000
     ```
 

@@ -781,6 +781,7 @@ async function startServer() {
 
       const targetUrl = `${baseUrl.replace(/\/$/, '')}/api/mailer.php`;
       console.log(`[Proxy] Forwarding mail request to: ${targetUrl}`);
+      logEvent(`[Proxy] Forwarding mail to remote: ${targetUrl}`);
       
       const response = await fetch(targetUrl, {
         method: 'POST',
@@ -796,7 +797,15 @@ async function startServer() {
       try {
         data = JSON.parse(text);
       } catch (e) {
-        data = { success: false, error: "Invalid JSON from remote mailer", raw: text };
+        console.error(`[Proxy] Invalid JSON from ${targetUrl}. Raw response:`, text);
+        logEvent(`[Proxy] ERROR: Invalid JSON response from remote mailer.`);
+        data = { success: false, error: "Invalid JSON from remote mailer", raw: text.substring(0, 500) };
+      }
+      
+      if (data.success) {
+        logEvent(`[Proxy] SUCCESS: Remote mailer sent the email.`);
+      } else {
+        logEvent(`[Proxy] FAILED: Remote mailer returned an error: ${data.error || 'Unknown error'}`);
       }
       
       res.status(response.status).json(data);
